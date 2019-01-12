@@ -41,7 +41,7 @@ MEMORY { /* memory map of STM32L053R8 */
 }
 
 /* The size of the stack used by the application. NOTE: you need to adjust  */
-STACK_SIZE = 1024;
+STACK_SIZE = 6K;
 
 /* The size of the heap used by the application. NOTE: you need to adjust   */
 HEAP_SIZE = 0;

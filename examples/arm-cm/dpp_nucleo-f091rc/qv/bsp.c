@@ -1,7 +1,7 @@
 /*****************************************************************************
-* Product: DPP example, NUCLEO-L053R8 board, cooperative QV kernel
+* Product: DPP example, NUCLEO-F091RC board, cooperative QV kernel
 * Last Updated for Version: 6.3.3
-* Date of the Last Update:  2018-06-23
+* Date of the Last Update:  2018-09-15
 *
 *                    Q u a n t u m     L e a P s
 *                    ---------------------------
@@ -38,6 +38,8 @@
 #include "stm32f0xx.h"  /* CMSIS-compliant header file for the MCU used */
 /* add other drivers if necessary... */
 
+#include "stm32f0xx_nucleo.h"
+
 Q_DEFINE_THIS_FILE
 
 /*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! CAUTION !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -59,10 +61,10 @@ void EXTI0_1_IRQHandler(void);
 
 /* Local-scope defines -----------------------------------------------------*/
 /* LED pins available on the board (just one user LED LD2--Green on PA.5) */
-#define LED_LD2  (1U << 5)
+//#define LED_LD2  (1U << 5)
 
 /* Button pins available on the board (just one user Button B1 on PC.13) */
-#define BTN_B1   (1U << 13)
+//#define BTN_B1   (1U << 13)
 
 
 static uint32_t l_rnd;  /* random seed */
@@ -106,14 +108,14 @@ void SysTick_Handler(void) {   /* system clock tick ISR */
     * adapted from the book "Embedded Systems Dictionary" by Jack Ganssle
     * and Michael Barr, page 71.
     */
-    current = ~GPIOC->IDR; /* read Port C with the state of Button B1 */
+    current = BSP_PB_GetState(BUTTON_KEY); /* read the Key button */
     tmp = buttons.depressed; /* save the debounced depressed buttons */
     buttons.depressed |= (buttons.previous & current); /* set depressed */
     buttons.depressed &= (buttons.previous | current); /* clear released */
     buttons.previous   = current; /* update the history */
     tmp ^= buttons.depressed;     /* changed debounced depressed */
-    if ((tmp & BTN_B1) != 0U) {  /* debounced B1 state changed? */
-        if ((buttons.depressed & BTN_B1) != 0U) { /* is B1 depressed? */
+    if (tmp != 0U) {  /* debounced B1 state changed? */
+        if (buttons.depressed != 0U) { /* is B1 depressed? */
             static QEvt const pauseEvt = { PAUSE_SIG, 0U, 0U};
             QF_PUBLISH(&pauseEvt, &l_SysTick_Handler);
         }
@@ -139,24 +141,27 @@ void BSP_init(void) {
     SystemCoreClockUpdate();
 
     /* enable GPIOA clock port for the LED LD2 */
-    RCC->IOPENR |= (1U << 0);
-
-    /* configure LED (PA.5) pin as push-pull output, no pull-up, pull-down */
-    GPIOA->MODER   &= ~((3U << 2*5));
-    GPIOA->MODER   |=  ((1U << 2*5));
-    GPIOA->OTYPER  &= ~((1U <<   5));
-    GPIOA->OSPEEDR &= ~((3U << 2*5));
-    GPIOA->OSPEEDR |=  ((1U << 2*5));
-    GPIOA->PUPDR   &= ~((3U << 2*5));
+    BSP_LED_Init(LED2);
+//    BSP_LED_On(LED2);
+//    RCC->IOPENR |= (1U << 0);
+//
+//    /* configure LED (PA.5) pin as push-pull output, no pull-up, pull-down */
+//    GPIOA->MODER   &= ~((3U << 2*5));
+//    GPIOA->MODER   |=  ((1U << 2*5));
+//    GPIOA->OTYPER  &= ~((1U <<   5));
+//    GPIOA->OSPEEDR &= ~((3U << 2*5));
+//    GPIOA->OSPEEDR |=  ((1U << 2*5));
+//    GPIOA->PUPDR   &= ~((3U << 2*5));
 
     /* enable GPIOC clock port for the Button B1 */
-    RCC->IOPENR |=  (1U << 2);
-
-    /* configure Button (PC.13) pins as input, no pull-up, pull-down */
-    GPIOC->MODER   &= ~(3U << 2*13);
-    GPIOC->OSPEEDR &= ~(3U << 2*13);
-    GPIOC->OSPEEDR |=  (1U << 2*13);
-    GPIOC->PUPDR   &= ~(3U << 2*13);
+    BSP_PB_Init(BUTTON_KEY, BUTTON_MODE_GPIO);
+//    RCC->IOPENR |=  (1U << 2);
+//
+//    /* configure Button (PC.13) pins as input, no pull-up, pull-down */
+//    GPIOC->MODER   &= ~(3U << 2*13);
+//    GPIOC->OSPEEDR &= ~(3U << 2*13);
+//    GPIOC->OSPEEDR |=  (1U << 2*13);
+//    GPIOC->PUPDR   &= ~(3U << 2*13);
 
     BSP_randomSeed(1234U); /* seed the random number generator */
 
@@ -171,10 +176,10 @@ void BSP_init(void) {
 /*..........................................................................*/
 void BSP_displayPhilStat(uint8_t n, char const *stat) {
     if (stat[0] == 'h') {
-        GPIOA->BSRR |= LED_LD2;  /* turn LED on  */
+    	BSP_LED_On(LED2);  /* turn LED on  */
     }
     else {
-        GPIOA->BSRR |= (LED_LD2 << 16);  /* turn LED off */
+    	BSP_LED_Off(LED2);;  /* turn LED off */
     }
 
     QS_BEGIN(PHILO_STAT, AO_Philo[n]) /* application-specific record begin */
@@ -210,18 +215,20 @@ void BSP_terminate(int16_t result) {
 }
 /*..........................................................................*/
 void BSP_wait4SW1(void) {
-    while ((GPIOC->IDR  & BTN_B1) != 0U) {
-        GPIOA->BSRR |= (LED_LD2);        /* turn LED2 on  */
-        GPIOA->BSRR |= (LED_LD2 << 16);  /* turn LED2 off */
+    while (BSP_PB_GetState(BUTTON_KEY) != 0U) {
+    	BSP_LED_On(LED2);   /* turn LED2 on  */
+    	BSP_LED_Off(LED2);  /* turn LED2 off */
     }
 }
 /*..........................................................................*/
 void BSP_ledOn(void) {
     //GPIOA->BSRR |= (LED_LD2);        /* turn LED2 on  */
+	BSP_LED_On(LED2);
 }
 /*..........................................................................*/
 void BSP_ledOff(void) {
     //GPIOA->BSRR |= (LED_LD2 << 16);  /* turn LED2 off */
+	BSP_LED_Off(LED2);
 }
 
 /* QF callbacks ============================================================*/
@@ -322,12 +329,19 @@ uint8_t QS_onStartup(void const *arg) {
     QS_initBuf(qsBuf, sizeof(qsBuf));
 
     /* enable peripheral clock for USART2 */
-    RCC->IOPENR  |= ( 1ul <<  0);   /* Enable GPIOA clock   */
-    RCC->APB1ENR |= ( 1ul << 17);   /* Enable USART#2 clock */
+
+      //RCC->IOPENR  |= ( 1ul <<  0);   /* Enable GPIOA clock   */
+      // RCC->APB1ENR |= ( 1ul << 17);   /* Enable USART#2 clock */
+
+    __IO uint32_t tmpreg;
+    SET_BIT(RCC->APB1ENR, RCC_APB1ENR_USART2EN);
+    /* Delay after an RCC peripheral clock enabling */
+    tmpreg = READ_BIT(RCC->APB1ENR, RCC_APB1ENR_USART2EN);
+    UNUSED(tmpreg);
 
     /* Configure PA3 to USART2_RX, PA2 to USART2_TX */
     GPIOA->AFR[0] &= ~((15ul << 4* 3) | (15ul << 4* 2) );
-    GPIOA->AFR[0] |=  (( 4ul << 4* 3) | ( 4ul << 4* 2) );
+    GPIOA->AFR[0] |=  (( 1ul << 4* 3) | ( 1ul << 4* 2) );
     GPIOA->MODER  &= ~(( 3ul << 2* 3) | ( 3ul << 2* 2) );
     GPIOA->MODER  |=  (( 2ul << 2* 3) | ( 2ul << 2* 2) );
 
