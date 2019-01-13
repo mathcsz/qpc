@@ -1,15 +1,15 @@
 /**
 * @file
-* @brief QF/C port to POSIX API with cooperative QV scheduler (posix-qv)
+* @brief QF/C port to POSIX API (single-threaded, like QV kernel)
 * @ingroup ports
 * @cond
 ******************************************************************************
-* Last updated for version 6.3.2
-* Last updated on  2018-06-18
+* Last Updated for Version: 6.3.7
+* Date of the Last Update:  2018-11-09
 *
-*                    Q u a n t u m     L e a P s
-*                    ---------------------------
-*                    innovating embedded systems
+*                    Q u a n t u m  L e a P s
+*                    ------------------------
+*                    Modern Embedded Software
 *
 * Copyright (C) 2005-2018 Quantum Leaps, LLC. All rights reserved.
 *
@@ -49,32 +49,46 @@
 
 #include <limits.h>       /* for PTHREAD_STACK_MIN */
 #include <sys/mman.h>     /* for mlockall() */
+#include <sys/select.h>
+#include <sys/ioctl.h>
+#include <string.h>       /* for memcpy() and memset() */
+#include <stdlib.h>
+#include <stdio.h>
+#include <termios.h>
+#include <unistd.h>
+#include <signal.h>
 
 Q_DEFINE_THIS_MODULE("qf_port")
 
 /* Global objects ==========================================================*/
-pthread_mutex_t QF_pThreadMutex_;
 QPSet  QV_readySet_;        /* QV-ready set of active objects */
 pthread_cond_t QV_condVar_; /* Cond.var. to signal events */
 
 /* Local objects ===========================================================*/
+static pthread_mutex_t l_pThreadMutex; /* POSIX mutex for critical sections */
 static bool l_isRunning;
+static struct termios l_tsav; /* structure with saved terminal attributes */
 static struct timespec l_tick;
 static int_t l_tickPrio;
 enum { NANOSLEEP_NSEC_PER_SEC = 1000000000 }; /* see NOTE05 */
 
 static void *ticker_thread(void *arg);
+static void sigIntHandler(int dummy);
 
 /* QF functions ============================================================*/
 void QF_init(void) {
     extern uint_fast8_t QF_maxPool_;
     extern QTimeEvt QF_timeEvtHead_[QF_MAX_TICK_RATE];
+    struct sigaction sig_act;
 
     /* lock memory so we're never swapped out to disk */
     /*mlockall(MCL_CURRENT | MCL_FUTURE);  uncomment when supported */
 
     /* init the global mutex with the default non-recursive initializer */
-    pthread_mutex_init(&QF_pThreadMutex_, NULL);
+    pthread_mutex_init(&l_pThreadMutex, NULL);
+
+    /* init the global condition variable with the default initializer */
+    pthread_cond_init(&QV_condVar_, NULL);
 
     /* clear the internal QF variables, so that the framework can (re)start
     * correctly even if the startup code is not called to clear the
@@ -87,11 +101,25 @@ void QF_init(void) {
     l_tick.tv_sec = 0;
     l_tick.tv_nsec = NANOSLEEP_NSEC_PER_SEC/100L; /* default clock tick */
     l_tickPrio = sched_get_priority_min(SCHED_FIFO); /* default tick prio */
+
+    /* install the SIGINT (Ctrl-C) signal handler */
+    sig_act.sa_handler = &sigIntHandler;
+    sigaction(SIGINT, &sig_act, NULL);
+}
+
+/****************************************************************************/
+void QF_enterCriticalSection_(void) {
+    pthread_mutex_lock(&l_pThreadMutex);
 }
 /****************************************************************************/
+void QF_leaveCriticalSection_(void) {
+    pthread_mutex_unlock(&l_pThreadMutex);
+}
 
+/****************************************************************************/
 int_t QF_run(void) {
     struct sched_param sparam;
+    QF_CRIT_STAT_
 
     QF_onStartup();  /* invoke startup callback */
 
@@ -140,7 +168,7 @@ int_t QF_run(void) {
     }
 
     /* the combined event-loop and background-loop of the QV kernel */
-    QF_INT_DISABLE();
+    QF_CRIT_ENTRY_();
     while (l_isRunning) {
         QEvt const *e;
         QActive *a;
@@ -151,7 +179,7 @@ int_t QF_run(void) {
 
             QPSet_findMax(&QV_readySet_, p);
             a = QF_active_[p];
-            QF_INT_ENABLE();
+            QF_CRIT_EXIT_();
 
             /* the active object 'a' must still be registered in QF
             * (e.g., it must not be stopped)
@@ -168,7 +196,7 @@ int_t QF_run(void) {
             QHSM_DISPATCH(&a->super, e);
             QF_gc(e);
 
-            QF_INT_DISABLE();
+            QF_CRIT_ENTRY_();
 
             if (a->eQueue.frontEvt == (QEvt const *)0) { /* empty queue? */
                 QPSet_remove(&QV_readySet_, p);
@@ -181,16 +209,16 @@ int_t QF_run(void) {
             * QP events become available.
             */
             while (QPSet_isEmpty(&QV_readySet_)) {
-                pthread_cond_wait(&QV_condVar_, &QF_pThreadMutex_);
+                pthread_cond_wait(&QV_condVar_, &l_pThreadMutex);
             }
         }
     }
-    QF_INT_ENABLE();
+    QF_CRIT_EXIT_();
     QF_onCleanup();  /* cleanup callback */
     QS_EXIT();       /* cleanup the QSPY connection */
 
-    pthread_cond_destroy(&QV_condVar_);       // cleanup the condition variable
-    pthread_mutex_destroy(&QF_pThreadMutex_); // cleanup the global mutex
+    pthread_cond_destroy(&QV_condVar_);     // cleanup the condition variable
+    pthread_mutex_destroy(&l_pThreadMutex); // cleanup the global mutex
 
     return (int_t)0; /* return success */
 }
@@ -214,7 +242,37 @@ void QF_stop(void) {
     QPSet_insert(&QV_readySet_, p);
     pthread_cond_signal(&QV_condVar_);
 }
+
 /*..........................................................................*/
+void QF_consoleSetup(void) {
+    struct termios tio;   /* modified terminal attributes */
+
+    tcgetattr(0, &l_tsav); /* save the current terminal attributes */
+    tcgetattr(0, &tio);    /* obtain the current terminal attributes */
+    tio.c_lflag &= ~(ICANON | ECHO); /* disable the canonical mode & echo */
+    tcsetattr(0, TCSANOW, &tio);     /* set the new attributes */
+}
+/*..........................................................................*/
+void QF_consoleCleanup(void) {
+    tcsetattr(0, TCSANOW, &l_tsav); /* restore the saved attributes */
+}
+/*..........................................................................*/
+int QF_consoleGetKey(void) {
+    int byteswaiting;
+    ioctl(0, FIONREAD, &byteswaiting);
+    if (byteswaiting > 0) {
+        char ch;
+        read(0, &ch, 1);
+        return (int)ch;
+    }
+    return 0; /* no input at this time */
+}
+/*..........................................................................*/
+int QF_consoleWaitForKey(void) {
+    return getchar();
+}
+
+/****************************************************************************/
 void QActive_start_(QActive * const me, uint_fast8_t prio,
                     QEvt const *qSto[], uint_fast16_t qLen,
                     void *stkSto, uint_fast16_t stkSize,
@@ -243,11 +301,16 @@ void QActive_stop(QActive * const me) {
 static void *ticker_thread(void *arg) { /* for pthread_create() */
     (void)arg; /* unused parameter */
     while (l_isRunning) { /* the clock tick loop... */
-        QF_onClockTick(); /* clock tick callback (must call QF_TICK_X()) */
-
         nanosleep(&l_tick, NULL); /* sleep for the number of ticks, NOTE05 */
+        QF_onClockTick(); /* clock tick callback (must call QF_TICK_X()) */
     }
     return (void *)0; /* return success */
+}
+/*..........................................................................*/
+static void sigIntHandler(int dummy) {
+    (void)dummy; /* unused parameter */
+    QF_onCleanup();
+    exit(-1);
 }
 
 /*****************************************************************************

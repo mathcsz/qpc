@@ -1,14 +1,15 @@
 /**
 * @file
-* @brief QF/C "port" for QUTEST unit test harness, Win32 with GNU or VisualC++
+* @brief QF/C "port" for QUTest unit test harness, Win32 with GNU or VisualC++
+* @ingroup ports
 * @cond
 ******************************************************************************
-* Last Updated for Version: 6.2.0
-* Date of the Last Update:  2018-03-12
+* Last Updated for Version: 6.3.7
+* Date of the Last Update:  2018-11-17
 *
-*                    Q u a n t u m     L e a P s
-*                    ---------------------------
-*                    innovating embedded systems
+*                    Q u a n t u m  L e a P s
+*                    ------------------------
+*                    Modern Embedded Software
 *
 * Copyright (C) 2005-2018 Quantum Leaps, LLC. All rights reserved.
 *
@@ -39,7 +40,7 @@
 #ifndef qf_port_h
 #define qf_port_h
 
-/* QUTEST event queue and thread types */
+/* QUTest event queue and thread types */
 #define QF_EQUEUE_TYPE QEQueue
 /*#define QF_OS_OBJECT_TYPE */
 /*#define QF_THREAD_TYPE */
@@ -54,7 +55,7 @@
 #define QF_INT_DISABLE()     (++QF_intNest)
 #define QF_INT_ENABLE()      (--QF_intNest)
 
-/* QF critical section */
+/* QUTest critical section */
 /* QF_CRIT_STAT_TYPE not defined */
 #define QF_CRIT_ENTRY(dummy) QF_INT_DISABLE()
 #define QF_CRIT_EXIT(dummy)  QF_INT_ENABLE()
@@ -62,15 +63,20 @@
 /* QF_LOG2 not defined -- use the internal LOG2() implementation */
 
 #include "qep_port.h"  /* QEP port */
-#include "qequeue.h"   /* QUTEST port uses QEQueue event-queue */
-#include "qmpool.h"    /* QUTEST port uses QMPool memory-pool */
+#include "qequeue.h"   /* QUTest port uses QEQueue event-queue */
+#include "qmpool.h"    /* QUTest port uses QMPool memory-pool */
 #include "qf.h"        /* QF platform-independent public interface */
 
 /* interrupt nesting up-down counter */
 extern uint8_t volatile QF_intNest;
 
-#ifdef _MSC_VER /* Microsoft C/C++ compiler? */
-/* define portable "safe" facilities from <stdio.h> and <string.h> ... */
+/****************************************************************************/
+/* Microsoft C++: portable "safe" facilities from <stdio.h> and <string.h> */
+#ifdef _MSC_VER
+
+#if (_MSC_VER < 1900) /* before Visual Studio 2015 */
+#define snprintf _snprintf
+#endif
 
 #define SNPRINTF_S(buf_, len_, format_, ...) \
     _snprintf_s(buf_, len_, _TRUNCATE, format_, ##__VA_ARGS__)
@@ -111,10 +117,16 @@ extern uint8_t volatile QF_intNest;
 /* interface used only inside QF implementation, but not in applications */
 #ifdef QP_IMPL
 
-    /* QUTEST scheduler locking (not used) */
+    /* QUTest scheduler locking (not used) */
     #define QF_SCHED_STAT_
     #define QF_SCHED_LOCK_(dummy) ((void)0)
     #define QF_SCHED_UNLOCK_()    ((void)0)
+
+    /* native event queue operations */
+    #define QACTIVE_EQUEUE_WAIT_(me_) \
+        Q_ASSERT_ID(110, (me_)->eQueue.frontEvt != (QEvt *)0)
+    #define QACTIVE_EQUEUE_SIGNAL_(me_) \
+        QPSet_insert(&QS_rxPriv_.readySet, (uint_fast8_t)(me_)->prio)
 
     /* native QF event pool operations */
     #define QF_EPOOL_TYPE_  QMPool
@@ -125,12 +137,8 @@ extern uint8_t volatile QF_intNest;
     #define QF_EPOOL_GET_(p_, e_, m_) ((e_) = (QEvt *)QMPool_get(&(p_), (m_)))
     #define QF_EPOOL_PUT_(p_, e_)     (QMPool_put(&(p_), e_))
 
-#endif /* QP_IMPL */
+    #include "qf_pkg.h" /* internal QF interface */
 
-/*****************************************************************************
-* NOTE1:
-* This QF "port" provides dummy declaration for the QF stub that provides
-* empty definitions of the QF facilities.
-*/
+#endif /* QP_IMPL */
 
 #endif /* qf_port_h */

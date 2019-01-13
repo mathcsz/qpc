@@ -1,13 +1,13 @@
 ##############################################################################
-# Product: Makefile for QP/C port to Win32 API, MinGW toolset
-# Last Updated for Version: 5.9.1
-# Date of the Last Update:  2017-05-25
+# Product: Makefile for QP/C port to Win32, MinGW toolset
+# Last updated for version 6.3.7
+# Last updated on  2018-11-06
 #
-#                    Q u a n t u m     L e a P s
-#                    ---------------------------
-#                    innovating embedded systems
+#                    Q u a n t u m  L e a P s
+#                    ------------------------
+#                    Modern Embedded Software
 #
-# Copyright (C) 2005-2017 Quantum Leaps, LLC. All rights reserved.
+# Copyright (C) 2002-2018 Quantum Leaps, LLC. All rights reserved.
 #
 # This program is open source software: you can redistribute it and/or
 # modify it under the terms of the GNU General Public License as published
@@ -28,7 +28,7 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 # Contact information:
-# https://state-machine.com
+# https://www.state-machine.com
 # mailto:info@state-machine.com
 ##############################################################################
 # examples of invoking this Makefile:
@@ -49,12 +49,12 @@
 #
 
 #-----------------------------------------------------------------------------
-# project name
+# project name:
 #
-PROJECT     := qp
+PROJECT := qp
 
 #-----------------------------------------------------------------------------
-# project directories
+# project directories:
 #
 
 # location of the QP/C framework
@@ -101,12 +101,13 @@ C_QS_SRCS := \
 	qs.c \
 	qs_rx.c \
 	qs_fp.c \
-	qs_64bit.c
+	qs_64bit.c \
+	qs_port.c
 
 # C++ source files
 CPP_SRCS :=
 
-# defines
+# defines:
 DEFINES  := -DQWIN_GUI
 
 #-----------------------------------------------------------------------------
@@ -142,10 +143,10 @@ BIN_DIR := rel
 
 # gcc options
 CFLAGS = -c -ffunction-sections -fdata-sections \
-	-Os $(INCLUDES) $(DEFINES) -Wall -W
+	-Os $(INCLUDES) $(DEFINES) -Wall -Wextra
 
 CPPFLAGS = -c -fno-rtti -fno-exceptions -ffunction-sections -fdata-sections \
-	-Os $(INCLUDES) $(DEFINES) -Wall -W
+	-Os $(INCLUDES) $(DEFINES) -Wall -Wextra
 
 else ifeq (spy, $(CONF))  # Spy configuration ................................
 
@@ -153,10 +154,10 @@ BIN_DIR = spy
 
 # gcc options
 CFLAGS = -c -g -ffunction-sections -fdata-sections \
-	-O $(INCLUDES) $(DEFINES) -Wall -W -DQ_SPY
+	-O $(INCLUDES) $(DEFINES) -Wall -Wextra -DQ_SPY
 
 CPPFLAGS = -c -fno-rtti -fno-exceptions -ffunction-sections -fdata-sections \
-	-O $(INCLUDES) $(DEFINES) -Wall -W -DQ_SPY
+	-O $(INCLUDES) $(DEFINES) -Wall -Wextra -DQ_SPY
 
 # add the QS sources...
 C_SRCS += $(C_QS_SRCS)
@@ -167,10 +168,10 @@ BIN_DIR = dbg
 
 # gcc options
 CFLAGS = -c -g -ffunction-sections -fdata-sections \
-	-O $(INCLUDES) $(DEFINES) -Wall -W
+	-O $(INCLUDES) $(DEFINES) -Wall -Wextra
 
 CPPFLAGS = -c -fno-rtti -fno-exceptions -ffunction-sections -fdata-sections \
-	-O $(INCLUDES) $(DEFINES) -Wall -W
+	-O $(INCLUDES) $(DEFINES) -Wall -Wextra
 
 endif
 

@@ -1,16 +1,16 @@
 /**
 * @file
-* @brief QF/C port to POSIX API with cooperative QV scheduler (posix-qv)
+* @brief QF/C port to POSIX API (single-threaded, like the QV kernel)
 * @cond
 ******************************************************************************
-* Last updated for version 6.3.2
-* Last updated on  2018-06-16
+* Last Updated for Version: 6.3.7
+* Date of the Last Update:  2018-11-09
 *
-*                    Q u a n t u m     L e a P s
-*                    ---------------------------
-*                    innovating embedded systems
+*                    Q u a n t u m  L e a P s
+*                    ------------------------
+*                    Modern Embedded Software
 *
-* Copyright (C) Quantum Leaps, LLC. All rights reserved.
+* Copyright (C) 2005-2018 Quantum Leaps, LLC. All rights reserved.
 *
 * This program is open source software: you can redistribute it and/or
 * modify it under the terms of the GNU General Public License as published
@@ -41,8 +41,8 @@
 
 /* POSIX event queue and thread types */
 #define QF_EQUEUE_TYPE       QEQueue
-/*#define QF_OS_OBJECT_TYPE  // not provided */
-/*#define QF_THREAD_TYPE     // not provided */
+/*#define QF_OS_OBJECT_TYPE  // not used */
+/*#define QF_THREAD_TYPE     // not used */
 
 /* The maximum number of active objects in the application */
 #define QF_MAX_ACTIVE        64
@@ -57,22 +57,20 @@
 #define QF_MPOOL_CTR_SIZE    4
 #define QF_TIMEEVT_CTR_SIZE  4
 
-/* QF interrupt disable/enable, see NOTE1 */
-#define QF_INT_DISABLE()     pthread_mutex_lock(&QF_pThreadMutex_)
-#define QF_INT_ENABLE()      pthread_mutex_unlock(&QF_pThreadMutex_)
-
 /* QF critical section entry/exit for POSIX, see NOTE1 */
-/* QF_CRIT_STAT_TYPE // not defined */
-#define QF_CRIT_ENTRY(dummy) QF_INT_DISABLE()
-#define QF_CRIT_EXIT(dummy)  QF_INT_ENABLE()
+/* QF_CRIT_STAT_TYPE not defined */
+#define QF_CRIT_ENTRY(dummy) QF_enterCriticalSection_()
+#define QF_CRIT_EXIT(dummy)  QF_leaveCriticalSection_()
 
 /* QF_LOG2 not defined -- use the internal LOG2() implementation */
 
-#include <pthread.h>   /* POSIX-thread API */
 #include "qep_port.h"  /* QEP port */
 #include "qequeue.h"   /* POSIX-QV needs event-queue */
 #include "qmpool.h"    /* POSIX-QV needs memory-pool */
 #include "qf.h"        /* QF platform-independent public interface */
+
+void QF_enterCriticalSection_(void);
+void QF_leaveCriticalSection_(void);
 
 /* set clock tick rate and p-thread priority
 * (NOTE ticksPerSec==0 disables the "ticker thread"
@@ -82,7 +80,11 @@ void QF_setTickRate(uint32_t ticksPerSec, int_t tickPrio);
 /* clock tick callback (NOTE not called when "ticker thread" is not running) */
 void QF_onClockTick(void); /* clock tick callback (provided in the app) */
 
-extern pthread_mutex_t QF_pThreadMutex_; /* mutex for QF critical section */
+/* abstractions for console access... */
+void QF_consoleSetup(void);
+void QF_consoleCleanup(void);
+int QF_consoleGetKey(void);
+int QF_consoleWaitForKey(void);
 
 /****************************************************************************/
 /* interface used only inside QF implementation, but not in applications */
@@ -112,34 +114,37 @@ extern pthread_mutex_t QF_pThreadMutex_; /* mutex for QF critical section */
     #define QF_EPOOL_GET_(p_, e_, m_) ((e_) = (QEvt *)QMPool_get(&(p_), (m_)))
     #define QF_EPOOL_PUT_(p_, e_)     (QMPool_put(&(p_), e_))
 
+    #include <pthread.h> /* POSIX-thread API */
+
     extern QPSet QV_readySet_; /* QV-ready set of active objects */
     extern pthread_cond_t QV_condVar_; /* Cond.var. to signal events */
 
 #endif /* QP_IMPL */
 
-/*****************************************************************************
-*
+/****************************************************************************/
+/*
 * NOTE1:
 * QF, like all real-time frameworks, needs to execute certain sections of
-* code indivisibly to avoid data corruption. The most straightforward way of
-* protecting such critical sections of code is disabling and enabling
-* interrupts, which POSIX does not allow.
+* code exclusively, meaning that only one thread can execute the code at
+* the time. Such sections of code are called "critical sections"
 *
-* This QF port uses therefore a single package-scope p-thread mutex
-* QF_pThreadMutex_ to protect all critical sections. The mutex is locked upon
-* the entry to each critical sectioni and unlocked upon exit.
+* This port uses a pair of functions QF_enterCriticalSection_() /
+* QF_leaveCriticalSection_() to enter/leave the cirtical section,
+* respectively.
 *
-* Using the single mutex for all crtical section guarantees that only one
-* thread at a time can execute inside a critical section. This prevents race
-* conditions and data corruption.
+* These functions are implemented in the qf_port.c module, where they
+* manipulate the file-scope POSIX mutex object l_pThreadMutex_
+* to protect all critical sections. Using the single mutex for all crtical
+* section guarantees that only one thread at a time can execute inside a
+* critical section. This prevents race conditions and data corruption.
 *
-* Please note, however, that the mutex implementation of a critical section
-* behaves differently than the standard interrupt locking. A common mutex
-* ensures that only one thread at a time can execute a critical section, but
-* it does not guarantee that a context switch cannot occur within the
-* critical section. In fact, such context switches probably will happen, but
-* they should not cause concurrency hazards because the mutex eliminates all
-* race conditionis.
+* Please note, however, that the POSIX mutex implementation behaves
+* differently than interrupt disabling. A common POSIX mutex ensures
+* that only one thread at a time can execute a critical section, but it
+* does not guarantee that a context switch cannot occur within the
+* critical section. In fact, such context switches probably will happen,
+* but they should not cause concurrency hazards because the critical
+* section eliminates all race conditionis.
 *
 * Unlinke simply disabling and enabling interrupts, the mutex approach is
 * also subject to priority inversions. However, the p-thread mutex

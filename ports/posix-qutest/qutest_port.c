@@ -1,17 +1,17 @@
 /**
 * @file
-* @brief QS/C QUTEST port for POSIX
-* @ingroup qf
+* @brief QUTEST port to POSIX
+* @ingroup ports
 * @cond
 ******************************************************************************
-* Last Updated for Version: 6.2.0
-* Date of the Last Update:  2018-03-16
+* Last Updated for Version: 6.3.7
+* Date of the Last Update:  2018-11-29
 *
-*                    Q u a n t u m     L e a P s
-*                    ---------------------------
-*                    innovating embedded systems
+*                    Q u a n t u m  L e a P s
+*                    ------------------------
+*                    Modern Embedded Software
 *
-* Copyright (C) Quantum Leaps, LLC. All rights reserved.
+* Copyright (C) 2005-2018 Quantum Leaps, LLC. All rights reserved.
 *
 * This program is open source software: you can redistribute it and/or
 * modify it under the terms of the GNU General Public License as published
@@ -46,9 +46,7 @@
 #include "qassert.h"  /* QP embedded systems-friendly assertions */
 #include "qs_port.h"  /* include QS port */
 
-Q_DEFINE_THIS_MODULE("qutest_port")
-
-#include <stdio.h>    /* for printf() and _snprintf_s() */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
@@ -59,99 +57,122 @@ Q_DEFINE_THIS_MODULE("qutest_port")
 #include <errno.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <signal.h>
 
-#define QS_TX_SIZE     (4*1024)
-#define QS_RX_SIZE     1024
+//Q_DEFINE_THIS_MODULE("qutest_port")
+
+#define QS_TX_SIZE     (8*1024)
+#define QS_RX_SIZE     (2*1024)
+#define QS_TX_CHUNK    QS_TX_SIZE
 #define QS_IMEOUT_MS   100
+
 #define INVALID_SOCKET -1
+#define SOCKET_ERROR   -1
 
 /* local variables .........................................................*/
-static void sigIntHandler(int dummy);
 static int l_sock = INVALID_SOCKET;
+static void sigIntHandler(int dummy);
 
 /*..........................................................................*/
 uint8_t QS_onStartup(void const *arg) {
     static uint8_t qsBuf[QS_TX_SIZE];   /* buffer for QS-TX channel */
     static uint8_t qsRxBuf[QS_RX_SIZE]; /* buffer for QS-RX channel */
-    char hostName[64];
+    char hostName[128];
+    char const *serviceName = "6601";  /* default QSPY server port */
     char const *src;
     char *dst;
+    int status;
 
-    uint16_t port_local  = 51234; /* default local port */
-    uint16_t port_remote = 6601;  /* default QSPY server port */
+    struct addrinfo *result = NULL;
+    struct addrinfo *rp = NULL;
+    struct addrinfo hints;
     int sockopt_bool;
-    struct sockaddr_in sa_local;
-    struct sockaddr_in sa_remote;
-    struct hostent *host;
 
     struct sigaction sig_act;
 
+    /* initialize the QS transmit and receive buffers */
     QS_initBuf(qsBuf, sizeof(qsBuf));
     QS_rxInitBuf(qsRxBuf, sizeof(qsRxBuf));
 
+    /* extract hostName from 'arg' (hostName:port_remote)... */
     src = (arg != (void const *)0)
           ? (char const *)arg
-          : "localhost";
+          : "localhost"; /* default QSPY host */
     dst = hostName;
     while ((*src != '\0')
            && (*src != ':')
-           && (dst < &hostName[sizeof(hostName)]))
+           && (dst < &hostName[sizeof(hostName) - 1]))
     {
         *dst++ = *src++;
     }
-    *dst = '\0';
+    *dst = '\0'; /* zero-terminate hostName */
+
+    /* extract port_remote from 'arg' (hostName:port_remote)... */
     if (*src == ':') {
-        port_remote = (uint16_t)strtoul(src + 1, NULL, 10);
+        serviceName = src + 1;
     }
+    //printf("<TARGET> Connecting to QSPY on Host=%s:%s...\n",
+    //       hostName, serviceName);
 
-    //printf("<TARGET> Connecting to QSPY on Host=%s:%d...\n",
-    //       hostName, port_remote);
-
-    l_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); /* TCP socket */
-    if (l_sock == INVALID_SOCKET){
-        printf("<TARGET> ERROR   cannot create client socket,errno=%d\n",
-               errno);
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    status = getaddrinfo(hostName, serviceName, &hints, &result);
+    if (status != 0) {
+        fprintf(stderr,
+            "<TARGET> ERROR   cannot resolve host Name=%s:%s,Err=%d\n",
+                    hostName, serviceName, status);
         goto error;
     }
 
-    /* configure the socket */
+    for (rp = result; rp != NULL; rp = rp->ai_next) {
+        l_sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (l_sock != INVALID_SOCKET) {
+            if (connect(l_sock, rp->ai_addr, rp->ai_addrlen)
+                == SOCKET_ERROR)
+            {
+                close(l_sock);
+                l_sock = INVALID_SOCKET;
+            }
+            break;
+        }
+    }
+
+    freeaddrinfo(result);
+
+    /* socket could not be opened & connected? */
+    if (l_sock == INVALID_SOCKET) {
+        fprintf(stderr, "<TARGET> ERROR   cannot connect to QSPY at "
+            "host=%s:%s\n",
+            hostName, serviceName);
+        goto error;
+    }
+
+    /* set the socket to non-blocking mode */
+    status = fcntl(l_sock, F_GETFL, 0);
+    if (status == -1) {
+        fprintf(stderr,
+            "<TARGET> ERROR   Socket configuration failed errno=%d\n",
+            errno);
+        QS_EXIT();
+        goto error;
+    }
+    if (fcntl(l_sock, F_SETFL, status | O_NONBLOCK) != 0) {
+        fprintf(stderr, "<TARGET> ERROR   Failed to set non-blocking socket "
+            "errno=%d\n", errno);
+        QS_EXIT();
+        goto error;
+    }
+
+    /* configure the socket to reuse the address and not to linger */
     sockopt_bool = 1;
     setsockopt(l_sock, SOL_SOCKET, SO_REUSEADDR,
                &sockopt_bool, sizeof(sockopt_bool));
-
-    sockopt_bool = 0;
+    sockopt_bool = 0; /* negative option */
     setsockopt(l_sock, SOL_SOCKET, SO_LINGER,
                &sockopt_bool, sizeof(sockopt_bool));
-
-    /* local address:port */
-    memset(&sa_local, 0, sizeof(sa_local));
-    sa_local.sin_family = AF_INET;
-    sa_local.sin_port = htons(port_local);
-    host = gethostbyname(""); /* local host */
-
-    /* remote hostName:port (QSPY server socket) */
-    host = gethostbyname(hostName);
-    if (host == NULL) {
-        printf("<TARGET> ERROR   cannot resolve host Name=%s,errno=%d\n",
-               hostName, errno);
-        goto error;
-    }
-
-    memset(&sa_remote, 0, sizeof(sa_remote));
-    sa_remote.sin_family = AF_INET;
-    memcpy(&sa_remote.sin_addr, host->h_addr, host->h_length);
-    sa_remote.sin_port = htons(port_remote);
-
-    /* try to connect to the QSPY server */
-    if (connect(l_sock, (struct sockaddr *)&sa_remote, sizeof(sa_remote))
-        == -1)
-    {
-        printf("<TARGET> ERROR   cannot connect to QSPY at "
-               "Host=%s:%d,errno=%d\n",
-               hostName, port_remote, errno);
-        goto error;
-    }
 
     //printf("<TARGET> Connected to QSPY at Host=%s:%d\n",
     //       hostName, port_remote);
@@ -161,7 +182,7 @@ uint8_t QS_onStartup(void const *arg) {
     sig_act.sa_handler = &sigIntHandler;
     sigaction(SIGINT, &sig_act, NULL);
 
-    return (uint8_t)1;  /* success */
+    return (uint8_t)1; /* success */
 
 error:
     return (uint8_t)0; /* failure */
@@ -180,6 +201,48 @@ void QS_onReset(void) {
     exit(0);
 }
 /*..........................................................................*/
+void QS_onFlush(void) {
+    uint16_t nBytes;
+    uint8_t const *data;
+    static struct timespec const c_10ms = { 0, 10000000L };
+
+    if (l_sock == INVALID_SOCKET) { /* socket NOT initialized? */
+        fprintf(stderr, "<TARGET> ERROR   invalid TCP socket\n");
+        return;
+    }
+
+    nBytes = QS_TX_CHUNK;
+    while ((data = QS_getBlock(&nBytes)) != (uint8_t *)0) {
+        for (;;) { /* for-ever until break or return */
+            int nSent = send(l_sock, (char const *)data, (int)nBytes, 0);
+            if (nSent == SOCKET_ERROR) { /* sending failed? */
+                if ((errno == EWOULDBLOCK) || (errno == EAGAIN)) {
+                    /* sleep for 10ms and then loop back
+                    * to send() the SAME data again
+                    */
+                    nanosleep(&c_10ms, NULL);
+                }
+                else { /* some other socket error... */
+                    fprintf(stderr, "<TARGET> ERROR   sending data over TCP,"
+                           "errno=%d\n", errno);
+                    return;
+                }
+            }
+            else if (nSent < (int)nBytes) { /* sent fewer than requested? */
+                nanosleep(&c_10ms, NULL); /* sleep for 10ms */
+                /* adjust the data and loop back to send() the rest */
+                data   += nSent;
+                nBytes -= (uint16_t)nSent;
+            }
+            else {
+                break;
+            }
+        }
+        /* set nBytes for the next call to QS_getBlock() */
+        nBytes = QS_TX_CHUNK;
+    }
+}
+/*..........................................................................*/
 void QS_onTestLoop() {
     fd_set readSet;
     FD_ZERO(&readSet);
@@ -190,8 +253,6 @@ void QS_onTestLoop() {
             (long)0, (long)(QS_IMEOUT_MS * 1000)
         };
         int nrec;
-        uint16_t nBytes;
-        uint8_t const *block;
 
         FD_SET(l_sock, &readSet);
 
@@ -200,7 +261,8 @@ void QS_onTestLoop() {
         nrec = select(l_sock + 1, &readSet,
                       (fd_set *)0, (fd_set *)0, &timeout);
         if (nrec < 0) {
-            printf("<TARGET> ERROR socket select,errno=%d\n", errno);
+            fprintf(stderr, "<TARGET> ERROR socket select,errno=%d\n",
+                    errno);
             QS_onCleanup();
             exit(-2);
         }
@@ -218,18 +280,12 @@ void QS_onTestLoop() {
                 for (pb = &buf[0]; i > 0; --i, ++pb) {
                     QS_RX_PUT(*pb);
                 }
-                QS_rxParse(); /* parse all n-bytes of data */
+                QS_rxParse(); /* parse all n-bytes of RX data */
             }
         }
 
-        nBytes = QS_TX_SIZE;
-        //QF_CRIT_ENTRY(dummy);
-        block = QS_getBlock(&nBytes);
-        //QF_CRIT_EXIT(dummy);
-
-        if (block != (uint8_t *)0) {
-            send(l_sock, (char const *)block, nBytes, 0);
-        }
+        /* flush the QS TX buffer */
+        QS_onFlush();
     }
     /* set inTestLoop to true in case calls to QS_onTestLoop() nest,
     * which can happen through the calls to QS_TEST_PAUSE().
@@ -237,22 +293,10 @@ void QS_onTestLoop() {
     QS_rxPriv_.inTestLoop = true;
 }
 /*..........................................................................*/
-void QS_onFlush(void) {
-    if (l_sock != INVALID_SOCKET) {  /* socket initialized? */
-        uint16_t nBytes = QS_TX_SIZE;
-        uint8_t const *data;
-        while ((data = QS_getBlock(&nBytes)) != (uint8_t *)0) {
-            send(l_sock, (char const *)data, nBytes, 0);
-            nBytes = QS_TX_SIZE;
-        }
-    }
-}
-
-/*..........................................................................*/
 static void sigIntHandler(int dummy) {
     (void)dummy; /* unused parameter */
     QS_onCleanup();
-    printf("\n<TARGET> disconnecting from QSPY\n");
+    //printf("\n<TARGET> disconnecting from QSPY\n");
     exit(-1);
 }
 

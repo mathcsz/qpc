@@ -1,13 +1,13 @@
 /*****************************************************************************
 * Product: "Dining Philosophers Problem" example, ThreadX kernel
-* Last updated for version 5.6.2
-* Last updated on  2016-03-12
+* Last Updated for Version: 6.3.7
+* Date of the Last Update:  2018-12-17
 *
-*                    Q u a n t u m     L e a P s
-*                    ---------------------------
-*                    innovating embedded systems
+*                    Q u a n t u m  L e a P s
+*                    ------------------------
+*                    Modern Embedded Software
 *
-* Copyright (C) Quantum Leaps, LLC. All rights reserved.
+* Copyright (C) 2005-2018 Quantum Leaps, LLC. All rights reserved.
 *
 * This program is open source software: you can redistribute it and/or
 * modify it under the terms of the GNU General Public License as published
@@ -28,7 +28,7 @@
 * along with this program. If not, see <http://www.gnu.org/licenses/>.
 *
 * Contact information:
-* https://state-machine.com
+* https://www.state-machine.com
 * mailto:info@state-machine.com
 *****************************************************************************/
 #include "qpc.h"
@@ -57,8 +57,8 @@ Q_DEFINE_THIS_FILE
 #define BTN_GPIO_CLK      RCC_AHB1Periph_GPIOA
 #define BTN_B1            GPIO_Pin_0
 
-static unsigned  l_rnd; /* random seed */
-static TX_TIMER l_tick_timer; /* ThreadX timer to call QF_tickX_() */
+static uint32_t l_rnd; /* random seed */
+static TX_TIMER l_tick_timer; /* ThreadX timer to call QF_TICK_X() */
 
 #ifdef Q_SPY
     QSTimeCtr QS_tickTime_;
@@ -156,9 +156,9 @@ void BSP_displayPhilStat(uint8_t n, char const *stat) {
     (void)n; /* unused parameter (in all but Spy build configuration) */
 
     QS_BEGIN(PHILO_STAT, AO_Philo[n]) /* application-specific record begin */
-        QS_U8(1, n);                  /* Philosopher number */
-        QS_STR(stat);                 /* Philosopher status */
-    QS_END()                          /* application-specific record end */
+        QS_U8(1, n);  /* Philosopher number */
+        QS_STR(stat); /* Philosopher status */
+    QS_END()
 }
 /*..........................................................................*/
 void BSP_displayPaused(uint8_t paused) {
@@ -198,7 +198,7 @@ void QF_onStartup(void) {
     * other clock tick rates, if needed.
     *
     * The choice of a ThreadX timer is not the only option. Applications
-    * might choose to call QF_tickX_() directly from timer interrupts
+    * might choose to call QF_TICK_X() directly from timer interrupts
     * or from active object(s).
     */
     Q_ALLEGE(tx_timer_create(&l_tick_timer, /* ThreadX timer object */
@@ -315,17 +315,8 @@ uint8_t QS_onStartup(void const *arg) {
     QS_tickTime_ = QS_tickPeriod_; /* to start the timestamp at zero */
 
     /* setup the QS filters... */
-    QS_FILTER_ON(QS_QEP_STATE_ENTRY);
-    QS_FILTER_ON(QS_QEP_STATE_EXIT);
-    QS_FILTER_ON(QS_QEP_STATE_INIT);
-    QS_FILTER_ON(QS_QEP_INIT_TRAN);
-    QS_FILTER_ON(QS_QEP_INTERN_TRAN);
-    QS_FILTER_ON(QS_QEP_TRAN);
-    QS_FILTER_ON(QS_QEP_IGNORED);
-    QS_FILTER_ON(QS_QEP_DISPATCH);
-    QS_FILTER_ON(QS_QEP_UNHANDLED);
-
-    QS_FILTER_ON(PHILO_STAT);
+    QS_FILTER_ON(QS_ALL_RECORDS);
+    QS_FILTER_OFF(QS_QF_TICK);
 
     return (uint8_t)1; /* return success */
 }
